@@ -32,49 +32,79 @@
  ****************************************************************************/
 
 #include "rtcm.h"
+
 #include <cstring>
+
+QGC_LOGGING_CATEGORY(RtcmParserLog, "RtcmParserLog")
 
 RTCMParsing::RTCMParsing()
 {
-	reset();
+  reset();
 }
 
-RTCMParsing::~RTCMParsing()
-{
-	delete[] _buffer;
-}
+RTCMParsing::~RTCMParsing() { delete[] _buffer; }
 
-void RTCMParsing::reset()
-{
-	if (!_buffer) {
-		_buffer = new uint8_t[RTCM_INITIAL_BUFFER_LENGTH];
-		_buffer_len = RTCM_INITIAL_BUFFER_LENGTH;
-	}
+void RTCMParsing::reset() {
+  if (_buffer && _buffer_len < RTCM_INITIAL_BUFFER_LENGTH) {
+    delete[] _buffer;
+    _buffer = nullptr;
+    _buffer_len = 0;
+  }
 
-	_pos = 0;
-	_message_length = _buffer_len;
+  if (!_buffer) {
+    _buffer = new uint8_t[RTCM_INITIAL_BUFFER_LENGTH];
+    _buffer_len = RTCM_INITIAL_BUFFER_LENGTH;
+  }
+
+  _pos = 0;
+  _message_length = _buffer_len;
+  _rtcm_version = 0;
 }
 
 bool RTCMParsing::addByte(uint8_t b)
 {
 	if (!_buffer) {
-		return false;
+          qCDebug(RtcmParserLog, "RTCM: buffer allocation failed");
+          return false;
 	}
 
-	_buffer[_pos++] = b;
+        if (_pos == 0) {
+          if (b == RTCM2_PREAMBLE) {
+            qCDebug(RtcmParserLog, "RTCM 2 detected");
+            _rtcm_version = 2;
+          } else if (b == RTCM3_PREAMBLE) {
+            qCDebug(RtcmParserLog, "RTCM 3 detected");
+            _rtcm_version = 3;
+          } else {
+            qCDebug(RtcmParserLog, "RTCM: unknown preamble 0x%02x", b);
+            _rtcm_version = 0;
+          }
+        }
 
-	if (_pos == 3) {
+        if (_rtcm_version == 0) {
+//          qCCritical(RtcmParserLog, "RTCM 0: unknown preamble 0x%02x", _buffer[0]);
+          return false;
+        }
+
+        if (_rtcm_version == 2) {
+          qCWarning(RtcmParserLog) << "RTCM 2 not supported";
+          return false;
+        }
+
+        if (_pos >= _buffer_len) {
+          qCDebug(RtcmParserLog, "RTCM: buffer overflow");
+          return false;
+        }
+        _buffer[_pos++] = b;
+
+        if (_rtcm_version == 3 && _pos == 3) {
+          
 		_message_length = (((uint16_t)_buffer[1] & 3) << 8) | (_buffer[2]);
+                qCDebug(RtcmParserLog, "RTCM: message length %d", _message_length);
 
-		if (_message_length + 6 > _buffer_len) {
+        if (_message_length + 6 > _buffer_len) {
 			uint16_t new_buffer_len = _message_length + 6;
 			uint8_t *new_buffer = new uint8_t[new_buffer_len];
-
-			if (!new_buffer) {
-				delete[](_buffer);
-				_buffer = nullptr;
-				return false;
-			}
 
 			memcpy(new_buffer, _buffer, 3);
 			delete[](_buffer);
